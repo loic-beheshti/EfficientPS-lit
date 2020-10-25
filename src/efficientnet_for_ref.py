@@ -194,5 +194,67 @@ class EfficientNet(nn.Module):
         x = self._fc(x)
         return x
 
+"""
+class EfficientNet(nn.Module):
 
+    def __init__(self, compound_coef, load_weights=False):
+        super(EfficientNet, self).__init__()
+        model = EffNet.from_pretrained(f'efficientnet-b{compound_coef}', load_weights)
+        del model._conv_head
+        del model._bn1
+        del model._avg_pooling
+        del model._dropout
+        del model._fc
+        self.model = model
 
+    def forward(self, x):
+        x = self.model._conv_stem(x)
+        x = self.model._bn0(x)
+        x = self.model._swish(x)
+        feature_maps = []
+
+       
+        last_x = None
+        for idx, block in enumerate(self.model._blocks):
+            drop_connect_rate = self.model._global_params.drop_connect_rate
+            if drop_connect_rate:
+                drop_connect_rate *= float(idx) / len(self.model._blocks)
+            x = block(x, drop_connect_rate=drop_connect_rate)
+
+            if block._depthwise_conv.stride == [2, 2]:
+                feature_maps.append(last_x)
+            elif idx == len(self.model._blocks) - 1:
+                feature_maps.append(x)
+            last_x = x
+        del last_x
+        return feature_maps[1:]
+
+    
+    def extract_features_old(self, inputs):
+        # Stem
+        x = self._swish(self._bn0(self._conv_stem(inputs)))
+
+        # Blocks
+        for idx, block in enumerate(self._blocks):
+            drop_connect_rate = self._global_params.drop_connect_rate
+            if drop_connect_rate:
+                drop_connect_rate *= float(idx) / len(self._blocks)
+            x = block(x, drop_connect_rate=drop_connect_rate)
+        # Head
+        x = self._swish(self._bn1(self._conv_head(x)))
+
+        return x
+
+    def forward_old(self, inputs):
+        bs = inputs.size(0)
+        # Convolution layers
+        x = self.extract_features(inputs)
+
+        # Pooling and final linear layer
+        x = self._avg_pooling(x)
+        x = x.view(bs, -1)
+        x = self._dropout(x)
+        x = self._fc(x)
+        return x
+    
+"""
