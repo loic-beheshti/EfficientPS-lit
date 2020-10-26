@@ -8,8 +8,6 @@ from utils import (
     get_same_padding_conv2d,
     get_model_params,
     efficientnet_params,
-    Swish,
-    MemoryEfficientSwish,
     Conv2dStaticSamePadding,
     MaxPool2dStaticSamePadding,
     iABNConv1dBlock,
@@ -18,19 +16,19 @@ from utils import (
 
 class DualFPN(nn.Module):
     """
-    Loic from paper
+    2 way FPN for EfficientPS, currently fixed for efficientNet b-5
     """
     def __init__(self):
         super().__init__()
 
-        self.conv1_up = iABNConv1dBlock()
-        self.conv2_up = iABNConv1dBlock()
-        self.conv3_up = iABNConv1dBlock()
-        self.conv4_up = iABNConv1dBlock()
-        self.conv1_down = iABNConv1dBlock()
-        self.conv2_down = iABNConv1dBlock()
-        self.conv3_down = iABNConv1dBlock()
-        self.conv4_down = iABNConv1dBlock()
+        self.conv1_up = iABNConv1dBlock(in_channels=40)
+        self.conv2_up = iABNConv1dBlock(in_channels=64)
+        self.conv3_up = iABNConv1dBlock(in_channels=176)
+        self.conv4_up = iABNConv1dBlock(in_channels=2048)
+        self.conv1_down = iABNConv1dBlock(in_channels=40)
+        self.conv2_down = iABNConv1dBlock(in_channels=64)
+        self.conv3_down = iABNConv1dBlock(in_channels=176)
+        self.conv4_down = iABNConv1dBlock(in_channels=2048)
 
         self.upsample_1 = nn.Upsample(scale_factor=2, mode='nearest')
         self.upsample_2 = nn.Upsample(scale_factor=2, mode='nearest')
@@ -47,7 +45,6 @@ class DualFPN(nn.Module):
 
     def forward(self, inputs):
         b1, b2, b3, b4 = inputs
-
         """
         left to right way fpn
         """
@@ -62,16 +59,16 @@ class DualFPN(nn.Module):
         b4_down = self.conv4_down(b4)
         b3_down = self.conv3_down(b3) + self.upsample_1(b4_down)
         b2_down = self.conv2_down(b2) + self.upsample_2(b3_down)
-        b1_down = self.conv3_down(b1) + self.upsample_1(b2_down)
+        b1_down = self.conv1_down(b1) + self.upsample_3(b2_down)
 
         """
-        p32 to p4 exctraction
+        p32 to p4 extraction
         """
         p32 = self.p32_conv(b4_up + b4_down)
         p16 = self.p16_conv(b3_up + b3_down)
         p8 = self.p8_conv(b2_up + b2_down)
         p4 = self.p4_conv(b1_up + b1_down)
-
+        #print(p32.size(), p16.size(), p8.size(), p4.size())
         return [p32, p16, p8, p4]
 
 
@@ -88,9 +85,7 @@ class MBConvBlock(nn.Module):
     def __init__(self, block_args, global_params):
         super().__init__()
         self._block_args = block_args
-        self._bn_mom = 1 - global_params.batch_norm_momentum
-        self._bn_eps = global_params.batch_norm_epsilon
-        #self.has_se = (self._block_args.se_ratio is not None) and (0 < self._block_args.se_ratio <= 1)
+
         self.id_skip = block_args.id_skip  # skip connection and drop connect
 
         # Get static or dynamic convolution depending on image size
@@ -101,7 +96,6 @@ class MBConvBlock(nn.Module):
         oup = self._block_args.input_filters * self._block_args.expand_ratio  # number of output channels
         if self._block_args.expand_ratio != 1:
             self._expand_conv = Conv2d(in_channels=inp, out_channels=oup, kernel_size=1, bias=False)
-            #self._bn0 = nn.BatchNorm2d(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps)
             self._bn0 = ABN(oup)
 
         # Depthwise convolution phase
@@ -110,15 +104,12 @@ class MBConvBlock(nn.Module):
         self._depthwise_conv = Conv2d(
             in_channels=oup, out_channels=oup, groups=oup,  # groups makes it depthwise
             kernel_size=k, stride=s, bias=False)
-        #self._bn1 = nn.BatchNorm2d(num_features=oup, momentum=self._bn_mom, eps=self._bn_eps)
         self._bn1 = ABN(oup)
 
         # Output phase
         final_oup = self._block_args.output_filters
         self._project_conv = Conv2d(in_channels=oup, out_channels=final_oup, kernel_size=1, bias=False)
-        #self._bn2 = nn.BatchNorm2d(num_features=final_oup, momentum=self._bn_mom, eps=self._bn_eps)
         self._bn2 = ABN(final_oup)
-        self._swish = MemoryEfficientSwish()
 
     def forward(self, inputs, drop_connect_rate=None):
         """
@@ -126,17 +117,14 @@ class MBConvBlock(nn.Module):
         :param drop_connect_rate: drop connect rate (float, between 0 and 1)
         :return: output of block
         """
-
         # Expansion and Depthwise Convolution
         x = inputs
         if self._block_args.expand_ratio != 1:
             x = self._expand_conv(inputs)
             x = self._bn0(x)
-            x = self._swish(x)
 
         x = self._depthwise_conv(x)
         x = self._bn1(x)
-        x = self._swish(x)
 
         x = self._project_conv(x)
         x = self._bn2(x)
@@ -149,20 +137,11 @@ class MBConvBlock(nn.Module):
             x = x + inputs  # skip connection
         return x
 
-
-    def set_swish(self, memory_efficient=True):
-        """Sets swish function as memory efficient (for training) or standard (for export)"""
-        self._swish = MemoryEfficientSwish() if memory_efficient else Swish()
-
-
 class EfficientNet(nn.Module):
     """
-    An EfficientNet model. Most easily loaded with the .from_name or .from_pretrained methods
-    Args:
-        blocks_args (list): A list of BlockArgs to construct blocks
-        global_params (namedtuple): A set of GlobalParams shared between blocks
-    Example:
-        model = EfficientNet.from_pretrained('efficientnet-b0')
+    An EfficientNet model using the pytorch implementation mirroring the tendorrflow repo.
+    This specific Efficient follows the modifications done in EfficintPS paper, 
+    No squeeze and exitation, in__place batch norm and no classification layer.
     """
 
     def __init__(self, blocks_args=None, global_params=None):
@@ -175,15 +154,10 @@ class EfficientNet(nn.Module):
         # Get static or dynamic convolution depending on image size
         Conv2d = get_same_padding_conv2d(image_size=global_params.image_size)
 
-        # Batch norm parameters
-        bn_mom = 1 - self._global_params.batch_norm_momentum
-        bn_eps = self._global_params.batch_norm_epsilon
-
         # Stem
         in_channels = 3  # rgb
         out_channels = round_filters(32, self._global_params)  # number of output channels
         self._conv_stem = Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False)
-        #self._bn0 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
         self._bn0 = ABN(out_channels)
 
         # Build blocks
@@ -208,39 +182,30 @@ class EfficientNet(nn.Module):
         in_channels = block_args.output_filters  # output of final block
         out_channels = round_filters(1280, self._global_params)
         self._conv_head = Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
-        #self._bn1 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
-        self._bn0 = ABN(out_channels)
-
-        # Final linear layer
-        self._avg_pooling = nn.AdaptiveAvgPool2d(1)
-        self._dropout = nn.Dropout(self._global_params.dropout_rate)
-        #self._fc = nn.Linear(out_channels, self._global_params.num_classes)
-        self._swish = MemoryEfficientSwish()
-
-    def set_swish(self, memory_efficient=True):
-        """Sets swish function as memory efficient (for training) or standard (for export)"""
-        self._swish = MemoryEfficientSwish() if memory_efficient else Swish()
-        for block in self._blocks:
-            block.set_swish(memory_efficient)
+        self._bn1 = ABN(out_channels)
 
     def forward(self, x):
         x = self._conv_stem(x)
         x = self._bn0(x)
-        x = self._swish(x)
         feature_maps = []
 
+        last_x = x
+        last_size = x.size()[1]
         for idx, block in enumerate(self._blocks):
             drop_connect_rate = self._global_params.drop_connect_rate
             if drop_connect_rate:
                 drop_connect_rate *= float(idx) / len(self._blocks)
             x = block(x, drop_connect_rate=drop_connect_rate)
 
-            if block._depthwise_conv.stride == [2, 2]:
+            if last_size != x.size()[1]:
                 feature_maps.append(last_x)
             elif idx == len(self._blocks) - 1:
                 feature_maps.append(x)
-
-        feature_maps.append(self._swish(self._bn1(self._conv_head(x))))
+            
+            last_x = x
+            last_size = x.size()[1]
+        
+        feature_maps.append(self._bn1(self._conv_head(x)))
 
         return feature_maps
 
@@ -266,7 +231,7 @@ class EfficientPS(nn.Module):
 
         self.num_classes = num_classes
         
-        blocks_args, global_params = get_model_params(effNet_name, num_classes=30) # tbm (1.6, 2.2, 456, 0.4)
+        blocks_args, global_params = get_model_params(effNet_name, override_params={'num_classes': num_classes}) # tbm (1.6, 2.2, 456, 0.4)
 
         self.backbone_net = EfficientNet(blocks_args, global_params)
 
@@ -278,11 +243,12 @@ class EfficientPS(nn.Module):
 
     def forward(self, inputs):
 
-        p2, p3, p4, p5, p6, p7, p8, p9 = self.backbone_net(inputs)
-        
-        # locations of block extracted in efficient ps, may be corrected after verificatio 
-        features = (p2, p3, p5, p9)
-        
+        p1, p2, p3, p4, p5, p6, p7, p8, p9 = self.backbone_net(inputs)
+
+        #There is a difference between the levels written in the paper and the level in the graph
+        #In this example I chose to trust figure 2 and get (p3, p4, p6, p9) instead of (p2,p3,p5,p9)
+        features = (p3, p4, p6, p9) 
+
         features = self.dualfpn(features)
 
         return features

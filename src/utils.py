@@ -35,7 +35,7 @@ GlobalParams.__new__.__defaults__ = (None,) * len(GlobalParams._fields)
 BlockArgs.__new__.__defaults__ = (None,) * len(BlockArgs._fields)
 
 class iABNConv1dBlock(nn.Module):
-     def __init__(self, in_channels = 256, out_channels = 256, kernel_size = 1, bias=True):
+    def __init__(self, in_channels = 256, out_channels = 256, kernel_size = 1, bias=True):
         super(iABNConv1dBlock, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, bias=bias)
         self.inbn = ABN(out_channels)
@@ -56,55 +56,11 @@ class iABNSeparableConvBlock(nn.Module):
         self.depthwise_conv = Conv2dStaticSamePadding(in_channels, in_channels, kernel_size=3, stride=1, groups=in_channels, bias=False)
         self.pointwise_conv = Conv2dStaticSamePadding(in_channels, out_channels, kernel_size=1, stride=1)
         self.inbn = ABN(out_channels)
-        #self.m = nn.LeakyReLU(0.1)
         
     def forward(self, x):
         x = self.depthwise_conv(x)
         x = self.pointwise_conv(x)
         x = self.inbn(x)
-        #x = self.m(x)
-        return x
-
-
-class SeparableConvBlock(nn.Module):
-    """
-    created by Zylo117
-    """
-
-    def __init__(self, in_channels, out_channels=None, norm=True, activation=False, onnx_export=False):
-        super(SeparableConvBlock, self).__init__()
-        if out_channels is None:
-            out_channels = in_channels
-
-        # Q: whether separate conv
-        #  share bias between depthwise_conv and pointwise_conv
-        #  or just pointwise_conv apply bias.
-        # A: Confirmed, just pointwise_conv applies bias, depthwise_conv has no bias.
-
-        self.depthwise_conv = Conv2dStaticSamePadding(in_channels, in_channels,
-                                                      kernel_size=3, stride=1, groups=in_channels, bias=False)
-        self.pointwise_conv = Conv2dStaticSamePadding(in_channels, out_channels, kernel_size=1, stride=1)
-
-        self.norm = norm
-        if self.norm:
-            # Warning: pytorch momentum is different from tensorflow's, momentum_pytorch = 1 - momentum_tensorflow
-            #self.bn = nn.BatchNorm2d(num_features=out_channels, momentum=0.01, eps=1e-3)
-            self.bn = ABN(out_channels)
-
-        self.activation = activation
-        if self.activation:
-            self.swish = MemoryEfficientSwish() if not onnx_export else Swish()
-
-    def forward(self, x):
-        x = self.depthwise_conv(x)
-        x = self.pointwise_conv(x)
-
-        if self.norm:
-            x = self.bn(x)
-
-        if self.activation:
-            x = self.swish(x)
-
         return x
 
 
@@ -185,30 +141,6 @@ class MaxPool2dStaticSamePadding(nn.Module):
 
         x = self.pool(x)
         return x
-
-
-class SwishImplementation(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, i):
-        result = i * torch.sigmoid(i)
-        ctx.save_for_backward(i)
-        return result
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        i = ctx.saved_variables[0]
-        sigmoid_i = torch.sigmoid(i)
-        return grad_output * (sigmoid_i * (1 + i * (1 - sigmoid_i)))
-
-
-class MemoryEfficientSwish(nn.Module):
-    def forward(self, x):
-        return SwishImplementation.apply(x)
-
-
-class Swish(nn.Module):
-    def forward(self, x):
-        return x * torch.sigmoid(x)
 
 
 def round_filters(filters, global_params):
