@@ -35,7 +35,7 @@ GlobalParams.__new__.__defaults__ = (None,) * len(GlobalParams._fields)
 BlockArgs.__new__.__defaults__ = (None,) * len(BlockArgs._fields)
 
 class iABNConv1dBlock(nn.Module):
-    def __init__(self, in_channels = 256, out_channels = 256, kernel_size = 1, bias=True):
+    def __init__(self, in_channels=256, out_channels=256, kernel_size = 1, bias=True):
         super(iABNConv1dBlock, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, bias=bias)
         self.inbn = ABN(out_channels)
@@ -48,12 +48,12 @@ class iABNConv1dBlock(nn.Module):
         return x
 
 class iABNSeparableConvBlock(nn.Module):
-    def __init__(self, in_channels = 256, out_channels=None):
+    def __init__(self, in_channels=256, out_channels=None, dilation=(1,1)):
         super(iABNSeparableConvBlock, self).__init__()
         if out_channels is None:
             out_channels = in_channels
 
-        self.depthwise_conv = Conv2dStaticSamePadding(in_channels, in_channels, kernel_size=3, stride=1, groups=in_channels, bias=False)
+        self.depthwise_conv = Conv2dStaticSamePadding(in_channels, in_channels, kernel_size=3, stride=1, groups=in_channels, dilation=dilation, bias=False)
         self.pointwise_conv = Conv2dStaticSamePadding(in_channels, out_channels, kernel_size=1, stride=1)
         self.inbn = ABN(out_channels)
         
@@ -204,14 +204,6 @@ class Conv2dDynamicSamePadding(nn.Conv2d):
         if pad_h > 0 or pad_w > 0:
             x = F.pad(x, [pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2])
         return F.conv2d(x, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
-
-
-class Identity(nn.Module):
-    def __init__(self, ):
-        super(Identity, self).__init__()
-
-    def forward(self, input):
-        return input
 
 
 ########################################################################
