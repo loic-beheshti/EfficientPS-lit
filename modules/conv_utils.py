@@ -37,6 +37,7 @@ class iABNSeparableConvBlock(nn.Module):
 
 class Conv2dStaticSamePadding(nn.Module):
     """
+    From github
     created by Zylo117
     The real keras/tensorflow conv2d with same padding
     """
@@ -77,6 +78,7 @@ class Conv2dStaticSamePadding(nn.Module):
 
 class MaxPool2dStaticSamePadding(nn.Module):
     """
+    From github
     created by Zylo117
     The real keras/tensorflow MaxPool2d with same padding
     """

@@ -62,5 +62,4 @@ class DualFPN(nn.Module):
         p16 = self._p16_conv(b3_up + b3_down)
         p8 = self._p8_conv(b2_up + b2_down)
         p4 = self._p4_conv(b1_up + b1_down)
-        print(p32.size(), p16.size(), p8.size(), p4.size())
         return [p32, p16, p8, p4]

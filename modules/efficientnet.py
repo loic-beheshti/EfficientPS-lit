@@ -82,7 +82,7 @@ class MBConvBlock(nn.Module):
 
 class EfficientNet(nn.Module):
     """
-    An EfficientNet model using the pytorch implementation mirroring the tendorrflow repo.
+    An EfficientNet model using the pytorch implementation mirroring the tendorflow repo.
     This specific Efficient follows the modifications done in EfficintPS paper, 
     No squeeze and exitation, in__place batch norm and no classification layer.
     """

@@ -5,13 +5,14 @@ from torchvision import transforms
 from torchvision.datasets import Cityscapes
 from pytorch_lightning.loggers import WandbLogger
 from argparse import ArgumentParser, Namespace
+#from datasets.cityscapes_transforms import cityscapesTransforms
 
 
 def main(hparams: Namespace):
-    model = EfficientPS()
-    dataset = Cityscapes('./data/Cityscapes', split='train', mode='fine', target_type='semantic', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
-    img, smnt = dataset[0]
-    print(img.size(), smnt)
+    model = EfficientPS(num_classes=19)
+    #dataset = Cityscapes('./data/Cityscapes', split='train', mode='fine', target_type='semantic', transforms=cityscapesTransforms())
+    #img, smnt = dataset[0]
+    #print("img, labels", img, smnt)
     logger = False
     if hparams.log_wandb:
         logger = WandbLogger()

@@ -56,7 +56,7 @@ class MCModule(nn.Module):
         return x
 
 class SemanticSegHead(nn.Module):
-    def __init__(self):
+    def __init__(self, num_classes=30):
         super().__init__()
         self._dpc_1 = DPC()
         self._dpc_2 = DPC()
@@ -68,7 +68,7 @@ class SemanticSegHead(nn.Module):
         self._up_sample_1 = nn.Upsample(scale_factor=8, mode='bilinear')
         self._up_sample_2 = nn.Upsample(scale_factor=4, mode='bilinear')
         self._up_sample_3 = nn.Upsample(scale_factor=2, mode='bilinear')
-        self._last_conv = iABNConv1dBlock(in_channels=512, out_channels=30)
+        self._last_conv = iABNConv1dBlock(in_channels=512, out_channels=num_classes)
         self._last_up_sample = nn.Upsample(scale_factor=4, mode='bilinear')
 
     def forward(self, inputs):

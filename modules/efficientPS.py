@@ -10,13 +10,15 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import Cityscapes
 import torchvision.transforms as transforms
+from datasets.cityscapes_transforms import cityscapesTransforms
 
 
 class EfficientPS(pl.LightningModule):
-    def __init__(self, num_classes=30, effNet_name = 'efficientnet-b5',  **kwargs):
+    def __init__(self, num_classes=30, effNet_name='efficientnet-b5', data_dir='./data/Cityscapes',**kwargs):
         super(EfficientPS, self).__init__()
 
         self.num_classes = num_classes
+        self.data_dir = data_dir
         
         blocks_args, global_params = get_model_params(effNet_name, override_params={'num_classes': num_classes}) # tbm (1.6, 2.2, 456, 0.4)
 
@@ -24,7 +26,7 @@ class EfficientPS(pl.LightningModule):
 
         self.dualfpn = DualFPN()
 
-        self.semseg_net = SemanticSegHead()
+        self.semseg_net = SemanticSegHead(num_classes=num_classes)
 
     def freeze_bn(self):
         for m in self.modules():
@@ -33,8 +35,8 @@ class EfficientPS(pl.LightningModule):
                 m.eval()
 
     def forward(self, inputs):
-        print("inputs = ", inputs.size())
         p1, p2, p3, p4, p5, p6, p7, p8, p9 = self.backbone_net(inputs)
+        del p1, p2, p5, p7, p8
 
         #There is a difference between the levels written in the paper and the level in the graph
         #In this example I chose to trust figure 2 and get (p3, p4, p6, p9) instead of (p2,p3,p5,p9)
@@ -43,7 +45,7 @@ class EfficientPS(pl.LightningModule):
         features = self.dualfpn(features)
 
         seg_out = self.semseg_net(features)
-        print("seg_out = ", seg_out.size())
+        #print("seg_out = ", seg_out.size())
 
         return seg_out
     
@@ -52,7 +54,7 @@ class EfficientPS(pl.LightningModule):
         img = img.float()
         mask = mask.long()
         out = self(img)
-        loss_val = F.cross_entropy(out, mask) # ignore_index=250
+        loss_val = F.cross_entropy(out, mask, ignore_index=250) # ignore_index=250
         log_dict = {'train_loss': loss_val}
         return {'loss': loss_val, 'log': log_dict, 'progress_bar': log_dict}
 
@@ -61,7 +63,7 @@ class EfficientPS(pl.LightningModule):
         img = img.float()
         mask = mask.long()
         out = self(img)
-        loss_val = F.cross_entropy(out, mask) # ignore_index=250
+        loss_val = F.cross_entropy(out, mask, ignore_index=250) # ignore_index=250
         return {'val_loss': loss_val}
 
     def validation_epoch_end(self, outputs):
@@ -75,7 +77,7 @@ class EfficientPS(pl.LightningModule):
 
     def train_dataloader(self):
         # use default transform
-        return DataLoader(Cityscapes('./data/Cityscapes', split='train', mode='fine', target_type='semantic', transform=transforms.ToTensor(), target_transform=transforms.ToTensor()), batch_size=32)
+        return DataLoader(Cityscapes(self.data_dir, split='train', mode='fine', target_type='semantic', transforms=cityscapesTransforms()), batch_size=1)
 
     def val_dataloader(self):
-        return DataLoader(Cityscapes('./data/Cityscapes', split='val', mode='fine', target_type='semantic', transform=transforms.ToTensor(), target_transform=transforms.ToTensor()), batch_size=32)
+        return DataLoader(Cityscapes(self.data_dir, split='val', mode='fine', target_type='semantic', transforms=cityscapesTransforms()), batch_size=1)
