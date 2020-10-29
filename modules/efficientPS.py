@@ -11,13 +11,16 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import Cityscapes
 import torchvision.transforms as transforms
 from datasets.cityscapes_transforms import cityscapesTransforms
+from .semantic_segloss import SemanticSegLoss
 
 
 class EfficientPS(pl.LightningModule):
-    def __init__(self, num_classes=30, effNet_name='efficientnet-b5', data_dir='./data/Cityscapes',**kwargs):
+    def __init__(self, num_classes=30, batch_size=2, effNet_name='efficientnet-b5',
+            data_dir='./data/Cityscapes',**kwargs):
         super(EfficientPS, self).__init__()
 
         self.num_classes = num_classes
+        self.batch_size = batch_size
         self.data_dir = data_dir
         
         blocks_args, global_params = get_model_params(effNet_name, override_params={'num_classes': num_classes}) # tbm (1.6, 2.2, 456, 0.4)
@@ -27,6 +30,8 @@ class EfficientPS(pl.LightningModule):
         self.dualfpn = DualFPN()
 
         self.semseg_net = SemanticSegHead(num_classes=num_classes)
+
+        self.seg_loss = SemanticSegLoss(ohem = 0.25)
 
     def freeze_bn(self):
         for m in self.modules():
@@ -54,7 +59,9 @@ class EfficientPS(pl.LightningModule):
         img = img.float()
         mask = mask.long()
         out = self(img)
-        loss_val = F.cross_entropy(out, mask, ignore_index=250) # ignore_index=250
+        #loss_val = F.cross_entropy(out, mask, ignore_index=250) # ignore_index=250
+        
+        loss_val = self.seg_loss(out, mask)
         log_dict = {'train_loss': loss_val}
         return {'loss': loss_val, 'log': log_dict, 'progress_bar': log_dict}
 
@@ -77,7 +84,7 @@ class EfficientPS(pl.LightningModule):
 
     def train_dataloader(self):
         # use default transform
-        return DataLoader(Cityscapes(self.data_dir, split='train', mode='fine', target_type='semantic', transforms=cityscapesTransforms()), batch_size=1)
+        return DataLoader(Cityscapes(self.data_dir, split='train', mode='fine', target_type='semantic', transforms=cityscapesTransforms()), batch_size=self.batch_size)
 
     def val_dataloader(self):
-        return DataLoader(Cityscapes(self.data_dir, split='val', mode='fine', target_type='semantic', transforms=cityscapesTransforms()), batch_size=1)
+        return DataLoader(Cityscapes(self.data_dir, split='val', mode='fine', target_type='semantic', transforms=cityscapesTransforms()), batch_size=self.batch_size)
