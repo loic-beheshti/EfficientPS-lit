@@ -84,7 +84,7 @@ class EfficientPS(pl.LightningModule):
 
     def train_dataloader(self):
         # use default transform
-        return DataLoader(Cityscapes(self.data_dir, split='train', mode='fine', target_type='semantic', transforms=cityscapesTransforms()), batch_size=self.batch_size)
+        return DataLoader(Cityscapes(self.data_dir, split='train', mode='fine', target_type=['semantic', 'instance'], transforms=cityscapesTransforms()), batch_size=self.batch_size)
 
     def val_dataloader(self):
-        return DataLoader(Cityscapes(self.data_dir, split='val', mode='fine', target_type='semantic', transforms=cityscapesTransforms()), batch_size=self.batch_size)
+        return DataLoader(Cityscapes(self.data_dir, split='val', mode='fine', target_type=['semantic', 'instance'], transforms=cityscapesTransforms()), batch_size=self.batch_size)

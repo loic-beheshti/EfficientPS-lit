@@ -2,6 +2,7 @@ import os
 import torch
 import numpy as np
 import scipy.misc as m
+import sys
 
 class cityscapesTransforms(torch.nn.Module):
     def __init__(self):
@@ -37,6 +38,58 @@ class cityscapesTransforms(torch.nn.Module):
         self.n_classes = 19
         self.img_size = (1024, 2048)
 
+    """
+    def mask_to_tight_box(self, mask):
+            a = mask.nonzero()
+            bbox = [
+                np.min(a[:, 1]),
+                np.min(a[:, 0]),
+                np.max(a[:, 1]),
+                np.max(a[:, 0]),
+            ]
+            bbox = list(map(int, bbox))
+            return bbox  # xmin, ymin, xmax, ymax
+    """
+    def encode_instance_label(self, label):
+        if label in self.void_classes: 
+            return -1
+        else:
+            return self.class_map[label] 
+
+    def mask_to_tight_box(self, mask):
+        a = mask.nonzero()
+        bbox = [
+            torch.min(a[:, 1]),
+            torch.min(a[:, 0]),
+            torch.max(a[:, 1]),
+            torch.max(a[:, 0]),
+        ]
+        bbox = list(map(int, bbox))
+        return bbox  # xmin, ymin, xmax, ymax
+
+    def processBinayMasks(self, ann):
+        boxes = []
+        masks = []
+        labels = []
+
+        # Sort for consistent order between instances as the polygon annotation
+        instIds = torch.sort(torch.unique(ann))[0]
+        for instId in instIds:
+            if instId < 1000:  # group labels
+                continue
+
+            mask = ann == instId
+            label = (instId / 1000.).int()
+            label = self.encode_instance_label(label.item())
+            box = self.mask_to_tight_box(mask)
+
+            boxes.append(box)
+            masks.append(mask)
+            labels.append(label)
+
+        return boxes, masks, labels
+
+
     def encode_segmap(self, mask):
         # Put all void classes to zero
         for _voidc in self.void_classes:
@@ -45,25 +98,30 @@ class cityscapesTransforms(torch.nn.Module):
             mask[mask == _validc] = self.class_map[_validc]
         return mask
     
-    def forward(self, img, lbl, norm = True):
+    def forward(self, img, lbls, norm = True):
         img = np.array(img, dtype=np.uint8)
-
-        lbl = self.encode_segmap(np.array(lbl, dtype=np.uint8))
-
+        
+        sem_lbl = lbls[0]
+        inst_lbl = lbls[1]
+        sem_lbl = self.encode_segmap(np.array(sem_lbl, dtype=np.uint8))
+        inst_lbl = np.array(inst_lbl, dtype=np.int32)
+        inst_lbl = torch.from_numpy(inst_lbl).long()
+        #sem_lbl = torch.from_numpy(sem_lbl).long()
+        boxes, masks, labels  = self.processBinayMasks(inst_lbl)
+        #np.set_printoptions(threshold=sys.maxsize)
+        #print(sem_lbl.shape, boxes)
+        
         img = img[:, :, ::-1]  # RGB -> BGR
         img = img.astype(np.float64)
         if norm:
             img = img.astype(float) / 255.0
         # NHWC -> NCHW
         img = img.transpose(2, 0, 1)
-
-        classes = np.unique(lbl)
-        #print("classes", classes)
         
-        lbl = lbl.astype(int)
+        sem_lbl = sem_lbl.astype(int)
 
         img = torch.from_numpy(img).float()
-        lbl = torch.from_numpy(lbl).long()
+        sem_lbl = torch.from_numpy(sem_lbl).long()
 
         #print("img, labels", img.size(), lbl.size())
-        return img, lbl
+        return img, [sem_lbl, boxes, masks, labels]
