@@ -38,18 +38,6 @@ class cityscapesTransforms(torch.nn.Module):
         self.n_classes = 19
         self.img_size = (1024, 2048)
 
-    """
-    def mask_to_tight_box(self, mask):
-            a = mask.nonzero()
-            bbox = [
-                np.min(a[:, 1]),
-                np.min(a[:, 0]),
-                np.max(a[:, 1]),
-                np.max(a[:, 0]),
-            ]
-            bbox = list(map(int, bbox))
-            return bbox  # xmin, ymin, xmax, ymax
-    """
     def encode_instance_label(self, label):
         if label in self.void_classes: 
             return -1
@@ -83,11 +71,16 @@ class cityscapesTransforms(torch.nn.Module):
             label = self.encode_instance_label(label.item())
             box = self.mask_to_tight_box(mask)
 
-            boxes.append(box)
+            boxes.append(torch.FloatTensor(box))
             masks.append(mask)
             labels.append(label)
 
-        return boxes, masks, labels
+        #print(boxes[0])
+        #print(torch.stack(boxes))
+        #print(torch.stack(masks))
+        #print(torch.LongTensor(labels))
+
+        return torch.stack(boxes), torch.stack(masks), torch.LongTensor(labels)
 
 
     def encode_segmap(self, mask):
@@ -122,6 +115,8 @@ class cityscapesTransforms(torch.nn.Module):
 
         img = torch.from_numpy(img).float()
         sem_lbl = torch.from_numpy(sem_lbl).long()
+
+        #print(sem_lbl, boxes, masks, labels)
 
         #print("img, labels", img.size(), lbl.size())
         return img, [sem_lbl, boxes, masks, labels]

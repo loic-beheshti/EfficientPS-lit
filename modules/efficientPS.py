@@ -13,6 +13,15 @@ import torchvision.transforms as transforms
 from datasets.cityscapes_transforms import cityscapesTransforms
 from .semantic_segloss import SemanticSegLoss
 
+import torchvision
+from .InstanceSeg_head_test import MyMaskRCNN
+#from torchvision.models.detection.anchor_utils import AnchorGenerator
+from torchvision.models.detection.rpn import AnchorGenerator
+from torch.jit.annotations import Tuple, List, Dict, Optional
+#from torchvision.models.detection import MaskRCNN
+
+
+
 
 class EfficientPS(pl.LightningModule):
     def __init__(self, num_classes=30, batch_size=2, effNet_name='efficientnet-b5',
@@ -33,15 +42,33 @@ class EfficientPS(pl.LightningModule):
 
         self.seg_loss = SemanticSegLoss(ohem = 0.25)
 
+        #self.backbone_w = backbone_wrapper()
+        anchor_generator = AnchorGenerator(sizes=((32, 64, 128, 256),),
+                                            aspect_ratios=((0.5, 1.0, 2.0),))
+
+        roi_pooler = torchvision.ops.MultiScaleRoIAlign(featmap_names=['0', '1', '2', '3'],
+                                                        output_size=14,
+                                                        sampling_ratio=2)
+
+        mask_roi_pooler = torchvision.ops.MultiScaleRoIAlign(featmap_names=['0', '1', '2', '3'],
+                                                              output_size=14,
+                                                              sampling_ratio=2)
+        #self.mask_rcnn = MyMaskRCNN([], num_classes=19)
+        self.mask_rcnn = MyMaskRCNN([],
+                          num_classes=19,
+                          rpn_anchor_generator=anchor_generator,
+                          box_roi_pool=roi_pooler,
+                          mask_roi_pool=mask_roi_pooler)
+
     def freeze_bn(self):
         for m in self.modules():
             #if isinstance(m, nn.BatchNorm2d):
             if isinstance(m, ABN):
                 m.eval()
 
-    def forward(self, inputs):
+    def forward(self, inputs, targets=None):
         p1, p2, p3, p4, p5, p6, p7, p8, p9 = self.backbone_net(inputs)
-        del p1, p2, p5, p7, p8
+        #del p1, p2, p5, p7, p8
 
         #There is a difference between the levels written in the paper and the level in the graph
         #In this example I chose to trust figure 2 and get (p3, p4, p6, p9) instead of (p2,p3,p5,p9)
@@ -49,16 +76,28 @@ class EfficientPS(pl.LightningModule):
 
         features = self.dualfpn(features)
 
+        #self.backbone_w.store_features(features)
+
+        self.mask_rcnn([inputs[0]], features, targets)
+
         seg_out = self.semseg_net(features)
+
         #print("seg_out = ", seg_out.size())
 
         return seg_out
     
     def training_step(self, batch, batch_nb):
-        img, mask = batch
+        #print(batch)
+        img, labels = batch
+        mask = labels[0]
+        #print(labels[1][0].size(), labels[2][0].size(), labels[3][0].size())
+        #target = List[Dict[('boxes', labels[1][0]), ('masks', labels[2][0]), ('labels', labels[3][0])]]
+        #target = List[Dict()]
+        target = [{'boxes': labels[1][0], 'masks': labels[2][0], 'labels': labels[3][0]}]
+        
         img = img.float()
         mask = mask.long()
-        out = self(img)
+        out = self(img, target)
         #loss_val = F.cross_entropy(out, mask, ignore_index=250) # ignore_index=250
         
         loss_val = self.seg_loss(out, mask)
@@ -66,7 +105,11 @@ class EfficientPS(pl.LightningModule):
         return {'loss': loss_val, 'log': log_dict, 'progress_bar': log_dict}
 
     def validation_step(self, batch, batch_idx):
-        img, mask = batch
+        
+        img, labels = batch
+        #print("mask = ", mask[0].size())
+        mask = labels[0]
+        #target = [Dict[Tensor]] # [('0', f0), ('1', f1), ('2', f2), ('3', f3)]
         img = img.float()
         mask = mask.long()
         out = self(img)
