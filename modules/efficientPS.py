@@ -14,12 +14,9 @@ from datasets.cityscapes_transforms import cityscapesTransforms
 from .semantic_segloss import SemanticSegLoss
 
 import torchvision
-from .InstanceSeg_head_test import MyMaskRCNN
-#from torchvision.models.detection.anchor_utils import AnchorGenerator
+from .InstanceSeg_head import MyMaskRCNN
 from torchvision.models.detection.rpn import AnchorGenerator
 from torch.jit.annotations import Tuple, List, Dict, Optional
-#from torchvision.models.detection import MaskRCNN
-
 
 
 
@@ -42,7 +39,6 @@ class EfficientPS(pl.LightningModule):
 
         self.seg_loss = SemanticSegLoss(ohem = 0.25)
 
-        #self.backbone_w = backbone_wrapper()
         anchor_generator = AnchorGenerator(sizes=((32, 64, 128, 256),),
                                             aspect_ratios=((0.5, 1.0, 2.0),))
 
@@ -76,44 +72,43 @@ class EfficientPS(pl.LightningModule):
 
         features = self.dualfpn(features)
 
-        #self.backbone_w.store_features(features)
-
-        self.mask_rcnn([inputs[0]], features, targets)
-
+        inst_losses = self.mask_rcnn([inputs[0]], features, targets)
+        
         seg_out = self.semseg_net(features)
 
         #print("seg_out = ", seg_out.size())
 
-        return seg_out
+        return seg_out, inst_losses
     
     def training_step(self, batch, batch_nb):
-        #print(batch)
         img, labels = batch
         mask = labels[0]
-        #print(labels[1][0].size(), labels[2][0].size(), labels[3][0].size())
-        #target = List[Dict[('boxes', labels[1][0]), ('masks', labels[2][0]), ('labels', labels[3][0])]]
-        #target = List[Dict()]
+
         target = [{'boxes': labels[1][0], 'masks': labels[2][0], 'labels': labels[3][0]}]
         
         img = img.float()
         mask = mask.long()
-        out = self(img, target)
+        out, inst_losses = self(img, target)
+
         #loss_val = F.cross_entropy(out, mask, ignore_index=250) # ignore_index=250
-        
         loss_val = self.seg_loss(out, mask)
+
         log_dict = {'train_loss': loss_val}
+        log_dict.update(inst_losses)
+
+        loss_val = torch.sum(torch.stack(list(log_dict.values())))
         return {'loss': loss_val, 'log': log_dict, 'progress_bar': log_dict}
 
     def validation_step(self, batch, batch_idx):
-        
         img, labels = batch
         #print("mask = ", mask[0].size())
         mask = labels[0]
         #target = [Dict[Tensor]] # [('0', f0), ('1', f1), ('2', f2), ('3', f3)]
         img = img.float()
         mask = mask.long()
-        out = self(img)
-        loss_val = F.cross_entropy(out, mask, ignore_index=250) # ignore_index=250
+        out_seg, out_rcnn = self(img)
+        #print("out_mask_rcnn", out_rcnn)
+        loss_val = F.cross_entropy(out_seg, mask, ignore_index=250) # ignore_index=250
         return {'val_loss': loss_val}
 
     def validation_epoch_end(self, outputs):

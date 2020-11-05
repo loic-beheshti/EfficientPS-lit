@@ -53,6 +53,11 @@ class cityscapesTransforms(torch.nn.Module):
             torch.max(a[:, 0]),
         ]
         bbox = list(map(int, bbox))
+        #boxes can be lines if small and can break the gradients
+        if(bbox[1] == bbox[3]):
+            bbox[3]+=1
+        if(bbox[0] == bbox[2]):
+            bbox[2]+=1
         return bbox  # xmin, ymin, xmax, ymax
 
     def processBinayMasks(self, ann):
@@ -79,6 +84,8 @@ class cityscapesTransforms(torch.nn.Module):
         #print(torch.stack(boxes))
         #print(torch.stack(masks))
         #print(torch.LongTensor(labels))
+        if boxes == []:
+            return [], [], []
 
         return torch.stack(boxes), torch.stack(masks), torch.LongTensor(labels)
 
@@ -96,13 +103,24 @@ class cityscapesTransforms(torch.nn.Module):
         
         sem_lbl = lbls[0]
         inst_lbl = lbls[1]
+        
         sem_lbl = self.encode_segmap(np.array(sem_lbl, dtype=np.uint8))
+
         inst_lbl = np.array(inst_lbl, dtype=np.int32)
         inst_lbl = torch.from_numpy(inst_lbl).long()
         #sem_lbl = torch.from_numpy(sem_lbl).long()
         boxes, masks, labels  = self.processBinayMasks(inst_lbl)
         #np.set_printoptions(threshold=sys.maxsize)
         #print(sem_lbl.shape, boxes)
+
+        """
+        import cv2
+        im = img[...]
+        cv2.imwrite('org_img.jpg', im)
+        for box in boxes:
+            cv2.rectangle(im,(box[0],box[1]),(box[2],box[3]),(0,255,0),2) # add rectangle to image
+        cv2.imwrite('bounding_box.jpg', im)
+        """
         
         img = img[:, :, ::-1]  # RGB -> BGR
         img = img.astype(np.float64)
