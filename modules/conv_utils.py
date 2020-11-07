@@ -5,17 +5,38 @@ from torch.nn import functional as F
 from functools import partial
 from inplace_abn import ABN
 
-class iABNConv1dBlock(nn.Module):
-    def __init__(self, in_channels=256, out_channels=256, kernel_size = 1, bias=True):
-        super(iABNConv1dBlock, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, bias=bias)
+
+class iABNLinearBlock(nn.Module):
+    def __init__(self, in_features=256, out_features=256, bias=True):
+        super(iABNLinearBlock, self).__init__()
+        self.lin = nn.Linear(in_features, out_features, bias=bias)
+        self.inbn = ABN(out_features)
+
+    def forward(self, x):
+        x = self.lin(x)
+        x = self.inbn(x)
+        return x
+
+class iABNTransposedConvBlock(nn.Module):
+    def __init__(self, in_channels=256, out_channels=256, kernel_size=2, stride=2, bias=True):
+        super(iABNTransposedConvBlock, self).__init__()
+        self.conv = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride=stride, bias=bias)
         self.inbn = ABN(out_channels)
-        #self.m = nn.LeakyReLU(0.1)
 
     def forward(self, x):
         x = self.conv(x)
         x = self.inbn(x)
-        #x = self.m(x)
+        return x
+
+class iABNConv1dBlock(nn.Module):
+    def __init__(self, in_channels=256, out_channels=256, kernel_size=1, bias=True):
+        super(iABNConv1dBlock, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, bias=bias)
+        self.inbn = ABN(out_channels)
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.inbn(x)
         return x
 
 class iABNSeparableConvBlock(nn.Module):

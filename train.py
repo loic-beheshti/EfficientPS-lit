@@ -21,6 +21,7 @@ def main(hparams: Namespace):
         gpus=hparams.gpus,
         logger=logger,
         max_epochs=hparams.epochs,
+        gradient_clip_val=0.5,
     )
 
     trainer.fit(model)
@@ -28,7 +29,7 @@ def main(hparams: Namespace):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument("--gpus", type=int, default=1, help="number of available GPUs")
-    parser.add_argument("--batch_size", type=int, default=2, help="size of the batches")
+    parser.add_argument("--batch_size", type=int, default=1, help="size of the batches")
     parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
     parser.add_argument("--epochs", type=int, default=20, help="number of epochs to train")
     parser.add_argument("--log_wandb", action='store_true', help="log training on Weights & Biases")

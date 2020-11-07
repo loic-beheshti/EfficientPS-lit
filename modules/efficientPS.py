@@ -107,7 +107,12 @@ class EfficientPS(pl.LightningModule):
         img = img.float()
         mask = mask.long()
         out_seg, out_rcnn = self(img)
-        #print("out_mask_rcnn", out_rcnn)
+        print("out_mask_rcnn", out_rcnn[0]["masks"].size())
+
+        #l = [module for module in self.modules() if type(module) != nn.Sequential]
+        #print(l)
+        #for module in self.modules if type(module) != nn.Sequential:
+        #print(self)
         loss_val = F.cross_entropy(out_seg, mask, ignore_index=250) # ignore_index=250
         return {'val_loss': loss_val}
 
