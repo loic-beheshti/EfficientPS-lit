@@ -74,6 +74,8 @@ class cityscapesTransforms(torch.nn.Module):
             mask = ann == instId
             label = (instId / 1000.).int()
             label = self.encode_instance_label(label.item())
+            if label < 0:
+                continue
             box = self.mask_to_tight_box(mask)
 
             boxes.append(torch.FloatTensor(box))
@@ -83,11 +85,10 @@ class cityscapesTransforms(torch.nn.Module):
         #print(boxes[0])
         #print(torch.stack(boxes))
         #print(torch.stack(masks))
-        #print(torch.LongTensor(labels))
         if boxes == []:
             return [], [], []
 
-        return torch.stack(boxes), torch.stack(masks), torch.LongTensor(labels)
+        return torch.stack(boxes), torch.stack(masks), torch.LongTensor(labels)-11
 
 
     def encode_segmap(self, mask):
@@ -110,6 +111,8 @@ class cityscapesTransforms(torch.nn.Module):
         inst_lbl = torch.from_numpy(inst_lbl).long()
         #sem_lbl = torch.from_numpy(sem_lbl).long()
         boxes, masks, labels  = self.processBinayMasks(inst_lbl)
+        #print("lab", labels) 
+        #labels = labels - 11
         #np.set_printoptions(threshold=sys.maxsize)
         #print(sem_lbl.shape, boxes)
 
@@ -133,6 +136,8 @@ class cityscapesTransforms(torch.nn.Module):
 
         img = torch.from_numpy(img).float()
         sem_lbl = torch.from_numpy(sem_lbl).long()
+
+        #print("sem = ", sem_lbl.unique())
 
         #print(sem_lbl, boxes, masks, labels)
 

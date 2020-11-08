@@ -12,6 +12,7 @@ from torchvision.datasets import Cityscapes
 import torchvision.transforms as transforms
 from datasets.cityscapes_transforms import cityscapesTransforms
 from .semantic_segloss import SemanticSegLoss
+from .panopticFusion import PanopticFusion
 
 import torchvision
 from .InstanceSeg_head import MyMaskRCNN
@@ -56,13 +57,16 @@ class EfficientPS(pl.LightningModule):
                           box_roi_pool=roi_pooler,
                           mask_roi_pool=mask_roi_pooler)
 
+        self.pf = PanopticFusion()
+        
+
     def freeze_bn(self):
         for m in self.modules():
             #if isinstance(m, nn.BatchNorm2d):
             if isinstance(m, ABN):
                 m.eval()
 
-    def forward(self, inputs, targets=None):
+    def forward(self, inputs, targets=None, no_targets=False):
         p1, p2, p3, p4, p5, p6, p7, p8, p9 = self.backbone_net(inputs)
         #del p1, p2, p5, p7, p8
 
@@ -72,29 +76,40 @@ class EfficientPS(pl.LightningModule):
 
         features = self.dualfpn(features)
 
-        inst_losses = self.mask_rcnn([inputs[0]], features, targets)
-        
+        # have ato handle the case where there is no things elt in the input
+        if no_targets == False:
+            inst_losses = self.mask_rcnn([inputs[0]], features, targets)
+        else: 
+            inst_losses = []
         seg_out = self.semseg_net(features)
 
         #print("seg_out = ", seg_out.size())
 
         return seg_out, inst_losses
     
+    # Currently handle batch = 1 only
     def training_step(self, batch, batch_nb):
         img, labels = batch
         mask = labels[0]
+        no_targets = False
 
-        target = [{'boxes': labels[1][0], 'masks': labels[2][0], 'labels': labels[3][0]}]
+        if labels[1] == []:
+            no_targets=True
+            print("====================== no_targets ======================")
+            target = []
+        else:
+            target = [{'boxes': labels[1][0], 'masks': labels[2][0], 'labels': labels[3][0]}]
         
         img = img.float()
         mask = mask.long()
-        out, inst_losses = self(img, target)
 
-        #loss_val = F.cross_entropy(out, mask, ignore_index=250) # ignore_index=250
-        loss_val = self.seg_loss(out, mask)
+        out, inst_losses = self(img, target, no_targets=no_targets)
 
-        log_dict = {'train_loss': loss_val}
-        log_dict.update(inst_losses)
+        loss_seg = self.seg_loss(out, mask)
+
+        log_dict = {'seg_loss': loss_seg}
+        if inst_losses != []:
+            log_dict.update(inst_losses)
 
         loss_val = torch.sum(torch.stack(list(log_dict.values())))
         return {'loss': loss_val, 'log': log_dict, 'progress_bar': log_dict}
@@ -107,12 +122,10 @@ class EfficientPS(pl.LightningModule):
         img = img.float()
         mask = mask.long()
         out_seg, out_rcnn = self(img)
-        print("out_mask_rcnn", out_rcnn[0]["masks"].size())
 
-        #l = [module for module in self.modules() if type(module) != nn.Sequential]
-        #print(l)
-        #for module in self.modules if type(module) != nn.Sequential:
-        #print(self)
+        self.pf.set_instAndSeg(out_seg[0].cpu(), out_rcnn[0])
+        canvas = self.pf.fusion()
+        
         loss_val = F.cross_entropy(out_seg, mask, ignore_index=250) # ignore_index=250
         return {'val_loss': loss_val}
 
@@ -126,7 +139,6 @@ class EfficientPS(pl.LightningModule):
         return optimizer
 
     def train_dataloader(self):
-        # use default transform
         return DataLoader(Cityscapes(self.data_dir, split='train', mode='fine', target_type=['semantic', 'instance'], transforms=cityscapesTransforms()), batch_size=self.batch_size)
 
     def val_dataloader(self):
