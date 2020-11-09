@@ -7,10 +7,11 @@ from .twoWayFPN import DualFPN
 from .semantic_head import SemanticSegHead
 from .efficientnet_utils import get_model_params
 import pytorch_lightning as pl
+from pytorch_lightning.metrics.functional.classification import iou
 from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import Cityscapes
 import torchvision.transforms as transforms
-from datasets.cityscapes_transforms import cityscapesTransforms
+from datasets.cityscapes_transforms import cityscapesTransforms, save_samples_out
 from .semantic_segloss import SemanticSegLoss
 from .panopticFusion import PanopticFusion
 
@@ -50,15 +51,13 @@ class EfficientPS(pl.LightningModule):
         mask_roi_pooler = torchvision.ops.MultiScaleRoIAlign(featmap_names=['0', '1', '2', '3'],
                                                               output_size=14,
                                                               sampling_ratio=2)
-        #self.mask_rcnn = MyMaskRCNN([], num_classes=19)
         self.mask_rcnn = MyMaskRCNN([],
                           num_classes=19,
                           rpn_anchor_generator=anchor_generator,
                           box_roi_pool=roi_pooler,
                           mask_roi_pool=mask_roi_pooler)
 
-        self.pf = PanopticFusion()
-        
+        self.pf = PanopticFusion()        
 
     def freeze_bn(self):
         for m in self.modules():
@@ -83,8 +82,6 @@ class EfficientPS(pl.LightningModule):
             inst_losses = []
         seg_out = self.semseg_net(features)
 
-        #print("seg_out = ", seg_out.size())
-
         return seg_out, inst_losses
     
     # Currently handle batch = 1 only
@@ -95,7 +92,7 @@ class EfficientPS(pl.LightningModule):
 
         if labels[1] == []:
             no_targets=True
-            print("====================== no_targets ======================")
+            #print("====================== no targets in things ======================")
             target = []
         else:
             target = [{'boxes': labels[1][0], 'masks': labels[2][0], 'labels': labels[3][0]}]
@@ -111,14 +108,19 @@ class EfficientPS(pl.LightningModule):
         if inst_losses != []:
             log_dict.update(inst_losses)
 
-        loss_val = torch.sum(torch.stack(list(log_dict.values())))
-        return {'loss': loss_val, 'log': log_dict, 'progress_bar': log_dict}
+        loss = torch.sum(torch.stack(list(log_dict.values())))
+
+        """
+        self.log('train_loss', loss)
+        self.log('log', log_dict) 
+        self.log('progress_bar', log_dict)
+        """
+        #self('loss', loss, on_step=True, on_epoch=True)
+        return {"loss": loss, "log": log_dict, "progress_bar": log_dict}
 
     def validation_step(self, batch, batch_idx):
         img, labels = batch
-        #print("mask = ", mask[0].size())
         mask = labels[0]
-        #target = [Dict[Tensor]] # [('0', f0), ('1', f1), ('2', f2), ('3', f3)]
         img = img.float()
         mask = mask.long()
         out_seg, out_rcnn = self(img)
@@ -126,13 +128,11 @@ class EfficientPS(pl.LightningModule):
         self.pf.set_instAndSeg(out_seg[0].cpu(), out_rcnn[0])
         canvas = self.pf.fusion()
         
-        loss_val = F.cross_entropy(out_seg, mask, ignore_index=250) # ignore_index=250
-        return {'val_loss': loss_val}
-
-    def validation_epoch_end(self, outputs):
-        loss_val = torch.stack([x['val_loss'] for x in outputs]).mean()
-        log_dict = {'val_loss': loss_val}
-        return {'log': log_dict, 'val_loss': log_dict['val_loss'], 'progress_bar': log_dict}
+        if self.current_epoch == 0:
+            save_samples_out((img[0]*255.).int().cpu().numpy(), torch.argmax(out_seg[0], 0).cpu().numpy(), canvas, out_rcnn[0]["boxes"].cpu().numpy(), name="out")
+        
+        val_miou = iou(mask[0].cpu(), torch.from_numpy(canvas//1000))
+        self.log('val_miou', val_miou, on_step=True, on_epoch=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)

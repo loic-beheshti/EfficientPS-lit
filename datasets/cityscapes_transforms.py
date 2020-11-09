@@ -3,46 +3,130 @@ import torch
 import numpy as np
 import scipy.misc as m
 import sys
+import cv2
+
+"""
+Parts of this code from https://github.com/meetshah1995/pytorch-semseg/blob/master/ptsemseg/loader/cityscapes_loader.py
+"""
+colors = [  # [  0,   0,   0],
+            [128, 64, 128],
+            [244, 35, 232],
+            [70, 70, 70],
+            [102, 102, 156],
+            [190, 153, 153],
+            [153, 153, 153],
+            [250, 170, 30],
+            [220, 220, 0],
+            [107, 142, 35],
+            [152, 251, 152],
+            [0, 130, 180],
+            [220, 20, 60],
+            [255, 0, 0],
+            [0, 0, 142],
+            [0, 0, 70],
+            [0, 60, 100],
+            [0, 80, 100],
+            [0, 0, 230],
+            [119, 11, 32],
+        ]
+
+void_classes = [0, 1, 2, 3, 4, 5, 6, 9, 10, 14, 15, 16, 18, 29, 30, -1]
+valid_classes = [7, 8, 11, 12, 13, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 31, 32, 33]
+
+class_names = [
+    "unlabelled",
+    "road",
+    "sidewalk",
+    "building",
+    "wall",
+    "fence",
+    "pole",
+    "traffic_light",
+    "traffic_sign",
+    "vegetation",
+    "terrain",
+    "sky",
+    "person",
+    "rider",
+    "car",
+    "truck",
+    "bus",
+    "train",
+    "motorcycle",
+    "bicycle"
+]
+
+label_colours = dict(zip(range(19), colors))
+ignore_index = 250
+class_map = dict(zip(valid_classes, range(19)))
+n_classes = 19
+img_size = (1024, 2048)
+
+def encode_instance_label(label):
+    if label in void_classes: 
+        return -1
+    else:
+        return class_map[label]
+
+def encode_segmap(mask):
+    # Put all void classes to zero
+    for _voidc in void_classes:
+        mask[mask == _voidc] = ignore_index
+    for _validc in valid_classes:
+        mask[mask == _validc] = class_map[_validc]
+    return mask
+
+def decode_segmap(temp):
+    r = temp.copy()
+    g = temp.copy()
+    b = temp.copy()
+    for l in range(0, 19):
+        r[temp == l] = label_colours[l][0]
+        g[temp == l] = label_colours[l][1]
+        b[temp == l] = label_colours[l][2]
+
+    rgb = np.zeros((temp.shape[0], temp.shape[1], 3))
+    rgb[:, :, 0] = r #/ 255.0
+    rgb[:, :, 1] = g #/ 255.0
+    rgb[:, :, 2] = b #/ 255.0
+    return rgb
+
+def decode_instmap(temp, diff_instance=False, needs_encoding=False):
+    if needs_encoding == True:
+        temp_sem = encode_segmap(temp//1000)
+    else:
+        temp_sem = temp//1000
+    if diff_instance == True:
+        temp_sem = (temp_sem + temp%1000) % 19 + 1
+    return decode_segmap(temp_sem)
+
+def save_samples_out(img, sem, inst, boxes, name="gd", val_dir="./val_samples/"):
+    #print(img.shape, sem.shape, inst.shape, boxes.shape)
+    im = img[...]
+    im = np.transpose(im, (1, 2, 0))
+    cv2.imwrite(val_dir+"img.jpg", im)
+    cv2.imwrite(val_dir+name+'_sem.jpg', decode_segmap(sem))
+    cv2.imwrite(val_dir+name+'_inst.jpg', decode_instmap(inst, needs_encoding=False))
+    cv2.imwrite(val_dir+name+'_instdiff.jpg', decode_instmap(inst, diff_instance=True, needs_encoding=False))
+    
+    for box in boxes:
+        cv2.rectangle(cv2.UMat(im),(box[0],box[1]),(box[2],box[3]),(0,255,0),2) # add rectangle to image
+    cv2.imwrite(val_dir+name+'_bounding_box.jpg', im)
+
+def save_samples(img, sem, inst, boxes):
+    im = img[...]
+    cv2.imwrite('org_img.jpg', im)
+    cv2.imwrite('decoded_sem.jpg', decode_segmap(sem))
+    cv2.imwrite('decoded_inst.jpg', decode_instmap(inst))
+    cv2.imwrite('decoded_instdiff.jpg', decode_instmap(inst, diff_instance=True))
+    
+    for box in boxes:
+        cv2.rectangle(im,(box[0],box[1]),(box[2],box[3]),(0,255,0),2) # add rectangle to image
+    cv2.imwrite('bounding_box.jpg', im)
 
 class cityscapesTransforms(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.void_classes = [0, 1, 2, 3, 4, 5, 6, 9, 10, 14, 15, 16, 18, 29, 30, -1]
-        self.valid_classes = [7, 8, 11, 12, 13, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 31, 32, 33]
-
-        self.class_names = [
-            "unlabelled",
-            "road",
-            "sidewalk",
-            "building",
-            "wall",
-            "fence",
-            "pole",
-            "traffic_light",
-            "traffic_sign",
-            "vegetation",
-            "terrain",
-            "sky",
-            "person",
-            "rider",
-            "car",
-            "truck",
-            "bus",
-            "train",
-            "motorcycle",
-            "bicycle"
-        ]
-
-        self.ignore_index = 250
-        self.class_map = dict(zip(self.valid_classes, range(19)))
-        self.n_classes = 19
-        self.img_size = (1024, 2048)
-
-    def encode_instance_label(self, label):
-        if label in self.void_classes: 
-            return -1
-        else:
-            return self.class_map[label] 
 
     def mask_to_tight_box(self, mask):
         a = mask.nonzero()
@@ -65,7 +149,6 @@ class cityscapesTransforms(torch.nn.Module):
         masks = []
         labels = []
 
-        # Sort for consistent order between instances as the polygon annotation
         instIds = torch.sort(torch.unique(ann))[0]
         for instId in instIds:
             if instId < 1000:  # group labels
@@ -73,7 +156,7 @@ class cityscapesTransforms(torch.nn.Module):
 
             mask = ann == instId
             label = (instId / 1000.).int()
-            label = self.encode_instance_label(label.item())
+            label = encode_instance_label(label.item())
             if label < 0:
                 continue
             box = self.mask_to_tight_box(mask)
@@ -82,22 +165,10 @@ class cityscapesTransforms(torch.nn.Module):
             masks.append(mask)
             labels.append(label)
 
-        #print(boxes[0])
-        #print(torch.stack(boxes))
-        #print(torch.stack(masks))
         if boxes == []:
             return [], [], []
 
         return torch.stack(boxes), torch.stack(masks), torch.LongTensor(labels)-11
-
-
-    def encode_segmap(self, mask):
-        # Put all void classes to zero
-        for _voidc in self.void_classes:
-            mask[mask == _voidc] = self.ignore_index
-        for _validc in self.valid_classes:
-            mask[mask == _validc] = self.class_map[_validc]
-        return mask
     
     def forward(self, img, lbls, norm = True):
         img = np.array(img, dtype=np.uint8)
@@ -105,30 +176,19 @@ class cityscapesTransforms(torch.nn.Module):
         sem_lbl = lbls[0]
         inst_lbl = lbls[1]
         
-        sem_lbl = self.encode_segmap(np.array(sem_lbl, dtype=np.uint8))
+        sem_lbl = encode_segmap(np.array(sem_lbl, dtype=np.uint8))
 
         inst_lbl = np.array(inst_lbl, dtype=np.int32)
         inst_lbl = torch.from_numpy(inst_lbl).long()
-        #sem_lbl = torch.from_numpy(sem_lbl).long()
         boxes, masks, labels  = self.processBinayMasks(inst_lbl)
-        #print("lab", labels) 
-        #labels = labels - 11
-        #np.set_printoptions(threshold=sys.maxsize)
-        #print(sem_lbl.shape, boxes)
 
-        """
-        import cv2
-        im = img[...]
-        cv2.imwrite('org_img.jpg', im)
-        for box in boxes:
-            cv2.rectangle(im,(box[0],box[1]),(box[2],box[3]),(0,255,0),2) # add rectangle to image
-        cv2.imwrite('bounding_box.jpg', im)
-        """
+        #save_samples(img, sem_lbl, inst_lbl, boxes)
         
         img = img[:, :, ::-1]  # RGB -> BGR
         img = img.astype(np.float64)
         if norm:
             img = img.astype(float) / 255.0
+
         # NHWC -> NCHW
         img = img.transpose(2, 0, 1)
         
@@ -137,9 +197,4 @@ class cityscapesTransforms(torch.nn.Module):
         img = torch.from_numpy(img).float()
         sem_lbl = torch.from_numpy(sem_lbl).long()
 
-        #print("sem = ", sem_lbl.unique())
-
-        #print(sem_lbl, boxes, masks, labels)
-
-        #print("img, labels", img.size(), lbl.size())
         return img, [sem_lbl, boxes, masks, labels]
