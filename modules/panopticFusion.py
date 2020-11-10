@@ -38,11 +38,11 @@ class PanopticFusion:
 
     # keep only things and fill canvas and convert to instance map format where
     # x < 1000 = semantics and x > 1000 = (label x //1000 and instance number x % 1000)
-    def write_to_instmap(self, label, stuff_size = 11):
+    def write_to_instmap(self, label_index, stuff_size=11):
         inst = 0
-        if label > stuff_size:
-            label -= stuff_size
-            inst = self.label_list[label]*1000 + self.label_instances[label]            
+        if label_index > stuff_size:
+            label_index -= stuff_size
+            inst = (self.label_list[label_index]+stuff_size)*1000 + self.label_instances[label_index]            
         return inst
 
     def fusion(self, inputs = None):
@@ -76,11 +76,11 @@ class PanopticFusion:
         
         self._canvas = self._canvas.numpy()
 
-        # tensor from list of fused things things
+        # tensor from list of fused things 
         if self.fl_list != []: 
             fl_t = torch.stack(self.fl_list)
 
-            # Identify the winner between things and 
+            # Identify the winner between things and stuffs
             inter_pred = torch.argmax(torch.cat((self._sem_stuff, fl_t), 0), dim=0)
 
             inter_pred = inter_pred.numpy()
@@ -88,7 +88,7 @@ class PanopticFusion:
             np.vectorize(self.write_to_instmap)(inter_pred)
             self._canvas = self._canvas + inter_pred 
             
-            # Fill empty elements with sem_head results
-            self._canvas = np.where(self._canvas > 0, self._canvas, self._sem_pred)
+        # Fill empty elements with sem_head results
+        self._canvas = np.where(self._canvas > 0, self._canvas, self._sem_pred)
 
         return self._canvas

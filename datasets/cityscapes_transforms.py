@@ -4,6 +4,9 @@ import numpy as np
 import scipy.misc as m
 import sys
 import cv2
+import random
+import torchvision.transforms as transforms
+import torchvision.transforms.functional as TF
 
 """
 Parts of this code from https://github.com/meetshah1995/pytorch-semseg/blob/master/ptsemseg/loader/cityscapes_loader.py
@@ -91,41 +94,54 @@ def decode_segmap(temp):
     rgb[:, :, 2] = b #/ 255.0
     return rgb
 
+def instmap_to_segmap(inst):
+    inst_seg = inst//1000
+    inst_t = inst.copy()
+    np.where(inst_t < 1000, inst_t, 0)
+    inst_seg = inst_seg + inst_t
+    #print("inst_seg", np.unique(inst_seg))
+    return inst_seg
+
 def decode_instmap(temp, diff_instance=False, needs_encoding=False):
     if needs_encoding == True:
         temp_sem = encode_segmap(temp//1000)
     else:
+        #print("temp", np.unique(temp))
         temp_sem = temp//1000
+        #print("temp_sem", np.unique(temp_sem))
     if diff_instance == True:
-        temp_sem = (temp_sem + temp%1000) % 19 + 1
+        temp_sem = (temp_sem + temp%1000) % 19
     return decode_segmap(temp_sem)
 
 def save_samples_out(img, sem, inst, boxes, name="gd", val_dir="./val_samples/"):
     #print(img.shape, sem.shape, inst.shape, boxes.shape)
     im = img[...]
     im = np.transpose(im, (1, 2, 0))
-    cv2.imwrite(val_dir+"img.jpg", im)
+    cv2.imwrite(val_dir+name+"_img.jpg", im)
     cv2.imwrite(val_dir+name+'_sem.jpg', decode_segmap(sem))
     cv2.imwrite(val_dir+name+'_inst.jpg', decode_instmap(inst, needs_encoding=False))
     cv2.imwrite(val_dir+name+'_instdiff.jpg', decode_instmap(inst, diff_instance=True, needs_encoding=False))
-    
+    im = cv2.UMat(im)
     for box in boxes:
-        cv2.rectangle(cv2.UMat(im),(box[0],box[1]),(box[2],box[3]),(0,255,0),2) # add rectangle to image
+        cv2.rectangle(im,(box[0],box[1]),(box[2],box[3]),(0,255,0),2) # add rectangle to image
     cv2.imwrite(val_dir+name+'_bounding_box.jpg', im)
 
 def save_samples(img, sem, inst, boxes):
-    im = img[...]
+    im = np.transpose(img, (1, 2, 0))
+    print("shape" ,im.shape)
     cv2.imwrite('org_img.jpg', im)
-    cv2.imwrite('decoded_sem.jpg', decode_segmap(sem))
-    cv2.imwrite('decoded_inst.jpg', decode_instmap(inst))
-    cv2.imwrite('decoded_instdiff.jpg', decode_instmap(inst, diff_instance=True))
+    #cv2.imwrite('decoded_sem.jpg', decode_segmap(sem))
+    #cv2.imwrite('decoded_inst.jpg', decode_instmap(inst))
+    #cv2.imwrite('decoded_instdiff.jpg', decode_instmap(inst, diff_instance=True))
     
-    for box in boxes:
-        cv2.rectangle(im,(box[0],box[1]),(box[2],box[3]),(0,255,0),2) # add rectangle to image
-    cv2.imwrite('bounding_box.jpg', im)
+    #for box in boxes:
+    #    cv2.rectangle(im,(box[0],box[1]),(box[2],box[3]),(0,255,0),2) # add rectangle to image
+    #cv2.imwrite('bounding_box.jpg', im)
 
 class cityscapesTransforms(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, augmentation=False):
+        self.augmentation = augmentation
+        self.random_crops = [(1024,2048), (1024,1024), (384,1280), (720,1280)] # 1024×2048, 1024×1024, 384×1280, 720×1280
         super().__init__()
 
     def mask_to_tight_box(self, mask):
@@ -169,29 +185,51 @@ class cityscapesTransforms(torch.nn.Module):
             return [], [], []
 
         return torch.stack(boxes), torch.stack(masks), torch.LongTensor(labels)-11
+
+    def aug_transform(self, image, mask, inst):
+        # Random crop
+        rand_size = self.random_crops[random.randint(0, 3)]
+        i, j, h, w = transforms.RandomCrop.get_params(image, output_size=rand_size)
+        image = TF.crop(image, i, j, h, w)
+        mask = TF.crop(mask, i, j, h, w)
+        inst = TF.crop(inst, i, j, h, w)
+
+        # Random horizontal flipping
+        if random.random() > 0.5:
+            image = TF.hflip(image)
+            mask = TF.hflip(mask)
+            inst = TF.hflip(inst)
+
+        # Random vertical flipping
+        if random.random() > 0.5:
+            image = TF.vflip(image)
+            mask = TF.vflip(mask)
+            inst = TF.vflip(inst)
+        
+        return image, mask, inst
     
     def forward(self, img, lbls, norm = True):
-        img = np.array(img, dtype=np.uint8)
         
         sem_lbl = lbls[0]
         inst_lbl = lbls[1]
-        
-        sem_lbl = encode_segmap(np.array(sem_lbl, dtype=np.uint8))
 
-        inst_lbl = np.array(inst_lbl, dtype=np.int32)
-        inst_lbl = torch.from_numpy(inst_lbl).long()
-        boxes, masks, labels  = self.processBinayMasks(inst_lbl)
-
-        #save_samples(img, sem_lbl, inst_lbl, boxes)
+        if self.augmentation == True:
+            img, sem_lbl, inst_lbl = self.aug_transform(img, sem_lbl, inst_lbl)
         
+        img = np.array(img, dtype=np.float64)
         img = img[:, :, ::-1]  # RGB -> BGR
-        img = img.astype(np.float64)
+        img = img.transpose(2, 0, 1) # NHWC -> NCHW
+
+        sem_lbl = np.array(sem_lbl, dtype=np.uint8)
+        inst_lbl = np.array(inst_lbl, dtype=np.int32)
+        
+        sem_lbl = encode_segmap(sem_lbl)
+        inst_lbl = torch.from_numpy(inst_lbl).long()
+        boxes, masks, labels = self.processBinayMasks(inst_lbl)
+
         if norm:
             img = img.astype(float) / 255.0
 
-        # NHWC -> NCHW
-        img = img.transpose(2, 0, 1)
-        
         sem_lbl = sem_lbl.astype(int)
 
         img = torch.from_numpy(img).float()

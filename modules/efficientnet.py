@@ -127,6 +127,7 @@ class EfficientNet(nn.Module):
         self._conv_head = Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
         self._bn1 = ABN(out_channels)
 
+    # Custom extraction for efficientPS
     def forward(self, x):
         x = self._conv_stem(x)
         x = self._bn0(x)

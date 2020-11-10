@@ -11,7 +11,7 @@ from pytorch_lightning.metrics.functional.classification import iou
 from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import Cityscapes
 import torchvision.transforms as transforms
-from datasets.cityscapes_transforms import cityscapesTransforms, save_samples_out
+from datasets.cityscapes_transforms import cityscapesTransforms, save_samples_out, instmap_to_segmap
 from .semantic_segloss import SemanticSegLoss
 from .panopticFusion import PanopticFusion
 
@@ -109,14 +109,13 @@ class EfficientPS(pl.LightningModule):
             log_dict.update(inst_losses)
 
         loss = torch.sum(torch.stack(list(log_dict.values())))
+        loss_t = {'loss_sum': loss}
+        log_dict.update(loss_t)
 
-        """
-        self.log('train_loss', loss)
-        self.log('log', log_dict) 
-        self.log('progress_bar', log_dict)
-        """
-        #self('loss', loss, on_step=True, on_epoch=True)
-        return {"loss": loss, "log": log_dict, "progress_bar": log_dict}
+        self.log_dict(log_dict, on_step=False, on_epoch=True, prog_bar=True)
+        #self.log('loss', loss, on_epoch=True, prog_bar=True)
+
+        return loss
 
     def validation_step(self, batch, batch_idx):
         img, labels = batch
@@ -127,19 +126,23 @@ class EfficientPS(pl.LightningModule):
 
         self.pf.set_instAndSeg(out_seg[0].cpu(), out_rcnn[0])
         canvas = self.pf.fusion()
+        sem_head_pred = torch.argmax(out_seg[0], 0)
+
+        if batch_idx == 0:
+            save_samples_out((img[0]*255.).int().cpu().numpy(), sem_head_pred.cpu().numpy(), canvas, out_rcnn[0]["boxes"].cpu().numpy(), name=str(self.current_epoch)+"_out")
         
-        if self.current_epoch == 0:
-            save_samples_out((img[0]*255.).int().cpu().numpy(), torch.argmax(out_seg[0], 0).cpu().numpy(), canvas, out_rcnn[0]["boxes"].cpu().numpy(), name="out")
-        
-        val_miou = iou(mask[0].cpu(), torch.from_numpy(canvas//1000))
-        self.log('val_miou', val_miou, on_step=True, on_epoch=True)
+        val_miou_fusion = iou(mask[0].cpu(), torch.from_numpy(instmap_to_segmap(canvas)))
+        val_miou_seg = iou(mask[0], sem_head_pred)
+
+        self.log('val_miou_fusion', val_miou_fusion, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_miou_seg', val_miou_seg, on_step=False, on_epoch=True, prog_bar=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
 
     def train_dataloader(self):
-        return DataLoader(Cityscapes(self.data_dir, split='train', mode='fine', target_type=['semantic', 'instance'], transforms=cityscapesTransforms()), batch_size=self.batch_size)
+        return DataLoader(Cityscapes(self.data_dir, split='train', mode='fine', target_type=['semantic', 'instance'], transforms=cityscapesTransforms(augmentation=False)), batch_size=self.batch_size)
 
     def val_dataloader(self):
         return DataLoader(Cityscapes(self.data_dir, split='val', mode='fine', target_type=['semantic', 'instance'], transforms=cityscapesTransforms()), batch_size=self.batch_size)
