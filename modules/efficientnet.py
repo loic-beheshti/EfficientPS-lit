@@ -140,7 +140,9 @@ class EfficientNet(nn.Module):
             if drop_connect_rate:
                 drop_connect_rate *= float(idx) / len(self._blocks)
             x = block(x, drop_connect_rate=drop_connect_rate)
-
+            
+            # We consider a feature maps being one of the ouptuts of the nine expected block if the following block does not
+            # share the same number of channels. This rules seems to scale up to all EfficientNets.
             if last_size != x.size()[1]:
                 feature_maps.append(last_x)
             elif idx == len(self._blocks) - 1:
