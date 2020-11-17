@@ -15,7 +15,8 @@ class PanopticFusion:
         self._inst_boxes = []
         self._inst_labels = []
         self._canvas = []
-
+        
+        # List used to track labels
         self.fl_list = []
         self.label_list = []
         self.label_instances = []
@@ -59,11 +60,12 @@ class PanopticFusion:
                 #self._inst_labels[i] = 1 # to debug
                 #label = 1
             
-            
+            # clip the segmentation mask and compute the fused logits
             sem_clipped = torch.zeros(self._sem_stuff[0].size())
             sem_clipped[box[1]:box[3], box[0]:box[2]] = self._sem_thing[label][box[1]:box[3], box[0]:box[2]]
             fl = self.fused_mask_logits(self._inst_masks[i], sem_clipped)
             
+            # track labels for instances
             if label not in self.label_list:
                 self.label_instances.append(0)
                 self.label_tracker[label] = 0
@@ -85,6 +87,7 @@ class PanopticFusion:
 
             inter_pred = inter_pred.numpy()
             
+            # convert prediction to instance tensor format
             np.vectorize(self.write_to_instmap)(inter_pred)
             self._canvas = self._canvas + inter_pred 
             
